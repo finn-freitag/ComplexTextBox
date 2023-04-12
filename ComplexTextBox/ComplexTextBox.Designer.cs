@@ -36,6 +36,9 @@
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.Name = "ComplexTextBox";
             this.Size = new System.Drawing.Size(735, 448);
+            this.KeyPress += new System.Windows.Forms.KeyPressEventHandler(this.ComplexTextBox_KeyPress);
+            this.MouseClick += new System.Windows.Forms.MouseEventHandler(this.ComplexTextBox_MouseClick);
+            this.Resize += new System.EventHandler(this.ComplexTextBox_Resize);
             this.ResumeLayout(false);
 
         }

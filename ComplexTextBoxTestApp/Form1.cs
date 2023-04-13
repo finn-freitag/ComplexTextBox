@@ -18,7 +18,10 @@ namespace ComplexTextBoxTestApp
             ComplexTextBox.ComplexTextBox complexTextBox = new ComplexTextBox.ComplexTextBox();
             complexTextBox.Location = new Point(0, 0);
             complexTextBox.Size = new Size(this.Width - 20, this.Height - 45);
-            complexTextBox.Text = "Hallo,\nMein Name ist Finn und das hier ist ein Test mit einer besonders langen Zeile, die über den Rand des Fenster hinausragt.";
+            complexTextBox.Text = "Hello,\nMy name is Finn and this is a test with an especially long line, which protrudes over the border of this textbox!";
+            complexTextBox.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            complexTextBox.BackColor = Color.Black;
+            complexTextBox.ForeColor = Color.White;
             this.Controls.Add(complexTextBox);
         }
     }

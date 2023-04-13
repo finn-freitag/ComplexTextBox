@@ -64,12 +64,19 @@ namespace ComplexTextBox
         public int LineSpacing = 5;
         public bool DynamicLineHeight = true;
 
+        public new bool AutoScroll = true;
+
+        public bool LineNumbering = true;
+        private Font LineNumberingFont = new Font(FontFamily.GenericMonospace, 12);
+        public ITextRenderer LineRenderer = new PlainTextRenderer();
+        public Color NumberTextSeparatorColor = Color.Gray;
+
         public int LeftDistance = 10;
         public int TopDistance = 10;
 
         public int ScrollBarThickness = 20;
 
-        public new Font DefaultFont = new Font(FontFamily.GenericMonospace, 12);
+        private new Font DefaultFont = new Font(FontFamily.GenericMonospace, 12);
 
         public ICursorRenderer CursorRenderer = new DefaultCursorRenderer();
 
@@ -137,7 +144,49 @@ namespace ComplexTextBox
             verticalScroll.ValueChanged += (object sender, EventArgs e) => { this.Refresh(); };
             this.Controls.Add(verticalScroll);
 
+            CursorBlinkingActive = true;
+
             TextChanged += ComplexTextBox_TextChanged;
+            CursorPositionChanged += ComplexTextBox_CursorPositionChanged;
+        }
+
+        private void ComplexTextBox_CursorPositionChanged(object sender, EventArgs e)
+        {
+            if (AutoScroll)
+            {
+                try
+                {
+                    int NumberSpacing = 0;
+                    if (LineNumbering) NumberSpacing = MeasureText(Convert.ToString(lines.Count), LineNumberingFont).Width + 10;
+
+                    int CurPosPixelsW = NumberSpacing + LeftDistance - horizontalScroll.Value + MeasureText(lines[CursorPos.Item1].Substring(0, CursorPos.Item2), DefaultFont).Width + 2;
+                    if (CurPosPixelsW > this.Width - ScrollBarThickness - LeftDistance)
+                    {
+                        int difference = CurPosPixelsW - (this.Width - ScrollBarThickness - LeftDistance);
+                        horizontalScroll.Value += difference;
+                    }
+                    if (CurPosPixelsW < LeftDistance + NumberSpacing)
+                    {
+                        int difference = -CurPosPixelsW + LeftDistance + NumberSpacing;
+                        horizontalScroll.Value -= difference;
+                    }
+
+                    int CurPosPixelsH = TopDistance - verticalScroll.Value + (LineHeight + LineSpacing) * CursorPos.Item1;
+                    if (CurPosPixelsH > this.Height - ScrollBarThickness * 2 - TopDistance)
+                    {
+                        int difference = CurPosPixelsH - this.Height + ScrollBarThickness * 2 + TopDistance;
+                        verticalScroll.Value = Math.Min(verticalScroll.Value + difference, verticalScroll.Maximum);
+                    }
+                    if (CurPosPixelsH < TopDistance)
+                    {
+                        int difference = -CurPosPixelsH + TopDistance;
+                        verticalScroll.Value -= difference;
+                    }
+                    //if (CursorPos.Item1 == 0) verticalScroll.Value = 0;
+                    //if (CursorPos.Item1 == lines.Count - 1) verticalScroll.Value = verticalScroll.Maximum;
+                }
+                catch { }
+            }
         }
 
         private void UpdateTimer_Tick(object sender, EventArgs e)
@@ -149,8 +198,10 @@ namespace ComplexTextBox
         private void ComplexTextBox_TextChanged(object sender, EventArgs e)
         {
             MaxSize = MeasureText(GetLongestLine(), DefaultFont);
-            int textWidth = this.Width - ScrollBarThickness - LeftDistance;
-            int textHeight = this.Height - ScrollBarThickness - LeftDistance;
+            int NumberSpacing = 0;
+            if (LineNumbering) NumberSpacing = MeasureText(Convert.ToString(lines.Count), LineNumberingFont).Width + 10;
+            int textWidth = this.Width - ScrollBarThickness - LeftDistance - NumberSpacing;
+            int textHeight = this.Height - ScrollBarThickness - TopDistance;
             if (MaxSize.Width > textWidth)
             {
                 horizontalScroll.Enabled = true;
@@ -178,7 +229,7 @@ namespace ComplexTextBox
         private void ValidateCursor()
         {
             if (CursorPos.Item1 < 0) CursorPos = (0, 0);
-            if (CursorPos.Item1 > lines.Count) CursorPos = (lines.Count - 1, lines[lines.Count - 1].Length);
+            if (CursorPos.Item1 >= lines.Count) CursorPos = (lines.Count - 1, lines[lines.Count - 1].Length);
             if (CursorPos.Item2 < 0) CursorPos = (CursorPos.Item1, 0);
             if (CursorPos.Item2 > lines[CursorPos.Item1].Length) CursorPos = (CursorPos.Item1, lines[CursorPos.Item1].Length);
         }
@@ -197,6 +248,7 @@ namespace ComplexTextBox
                         try
                         {
                             CursorPos = (CursorPos.Item1 + 1, 0);
+                            string s = lines[CursorPos.Item1];
                         }
                         catch
                         {
@@ -299,16 +351,28 @@ namespace ComplexTextBox
             // Fill using backcolor
             e.Graphics.Clear(BackColor);
 
+            // Draw line numbers
+            int NumberSpacing = 0;
+            if (LineNumbering)
+            {
+                for (int i = 0; i < lines.Count; i++)
+                {
+                    LineRenderer.RenderText(e.Graphics, LineNumberingFont, new PointF(5 - horizontalScroll.Value, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), Convert.ToString(i + 1), new SolidBrush(ForeColor), new SolidBrush(BackColor));
+                }
+                NumberSpacing = MeasureText(Convert.ToString(lines.Count), LineNumberingFont).Width + 10;
+                e.Graphics.DrawLine(new Pen(new SolidBrush(NumberTextSeparatorColor), 1.5f), new Point(NumberSpacing - horizontalScroll.Value, 0), new Point(NumberSpacing - horizontalScroll.Value, this.Height));
+            }
+
             // Render text
             ITextRenderer renderer = new PlainTextRenderer();
             for(int i = 0; i < lines.Count; i++)
             {
-                renderer.RenderText(e.Graphics, DefaultFont, new PointF(LeftDistance - horizontalScroll.Value, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), lines[i], new SolidBrush(ForeColor), new SolidBrush(BackColor));
+                renderer.RenderText(e.Graphics, DefaultFont, new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), lines[i], new SolidBrush(ForeColor), new SolidBrush(BackColor));
             }
 
             // Render Cursor
             int strWidth = MeasureText(lines[CursorPos.Item1].Substring(0, CursorPos.Item2), DefaultFont).Width;
-            CursorRenderer.RenderCursor(e.Graphics, MaxSize.Height, new PointF(LeftDistance - horizontalScroll.Value + strWidth + 2, ((DynamicLineHeight ? MaxSize.Height : LineHeight) + LineSpacing) * CursorPos.Item1 + TopDistance));
+            CursorRenderer.RenderCursor(e.Graphics, MaxSize.Height, new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing + strWidth + 2, (LineHeight + LineSpacing) * CursorPos.Item1 + TopDistance - verticalScroll.Value));
 
             // Overwrite Corner between scrollbars for better look
             e.Graphics.FillRectangle(new SolidBrush(BackColor), this.Width - ScrollBarThickness, this.Height - ScrollBarThickness, ScrollBarThickness, ScrollBarThickness);

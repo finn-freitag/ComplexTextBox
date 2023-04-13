@@ -1,4 +1,5 @@
 ﻿using ComplexTextBox.CursorRenderer;
+using ComplexTextBox.Helpers;
 using ComplexTextBox.TextRenderer;
 using System;
 using System.Collections.Generic;
@@ -8,9 +9,9 @@ using System.Drawing;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using static System.Net.Mime.MediaTypeNames;
 
 namespace ComplexTextBox
 {
@@ -40,6 +41,7 @@ namespace ComplexTextBox
         }
 
         private (int, int) curPos = (0, 0);
+        private (int, int) SelectionStart = (0, 0);
 
         public (int, int) CursorPos
         {
@@ -50,6 +52,7 @@ namespace ComplexTextBox
             set
             {
                 curPos = value;
+                if (!ModifierKeys.HasFlag(Keys.Shift) && !fixedSelection) SelectionStart = (curPos.Item1, curPos.Item2);
                 if (CursorPositionChanged != null) CursorPositionChanged(this, EventArgs.Empty);
             }
         }
@@ -79,6 +82,8 @@ namespace ComplexTextBox
         private new Font DefaultFont = new Font(FontFamily.GenericMonospace, 12);
 
         public ICursorRenderer CursorRenderer = new DefaultCursorRenderer();
+        public ITextRenderer PlainText = new PlainTextRenderer();
+        public ITextRenderer SelectionRenderer = new SelectionRenderer();
 
         public bool CursorBlinkingActive
         {
@@ -117,6 +122,8 @@ namespace ComplexTextBox
         private Timer UpdateTimer;
 
         private Size MaxSize = new Size(0, 0);
+
+        private bool fixedSelection = false;
 
         public ComplexTextBox()
         {
@@ -157,9 +164,9 @@ namespace ComplexTextBox
                 try
                 {
                     int NumberSpacing = 0;
-                    if (LineNumbering) NumberSpacing = MeasureText(Convert.ToString(lines.Count), LineNumberingFont).Width + 10;
+                    if (LineNumbering) NumberSpacing = MeasureTextHelper.MeasureText(Convert.ToString(lines.Count), LineNumberingFont).Width + 10;
 
-                    int CurPosPixelsW = NumberSpacing + LeftDistance - horizontalScroll.Value + MeasureText(lines[CursorPos.Item1].Substring(0, CursorPos.Item2), DefaultFont).Width + 2;
+                    int CurPosPixelsW = NumberSpacing + LeftDistance - horizontalScroll.Value + MeasureTextHelper.MeasureText(lines[CursorPos.Item1].Substring(0, CursorPos.Item2), DefaultFont).Width + 2;
                     if (CurPosPixelsW > this.Width - ScrollBarThickness - LeftDistance)
                     {
                         int difference = CurPosPixelsW - (this.Width - ScrollBarThickness - LeftDistance);
@@ -197,9 +204,9 @@ namespace ComplexTextBox
 
         private void ComplexTextBox_TextChanged(object sender, EventArgs e)
         {
-            MaxSize = MeasureText(GetLongestLine(), DefaultFont);
+            MaxSize = MeasureTextHelper.MeasureText(GetLongestLine(), DefaultFont);
             int NumberSpacing = 0;
-            if (LineNumbering) NumberSpacing = MeasureText(Convert.ToString(lines.Count), LineNumberingFont).Width + 10;
+            if (LineNumbering) NumberSpacing = MeasureTextHelper.MeasureText(Convert.ToString(lines.Count), LineNumberingFont).Width + 10;
             int textWidth = this.Width - ScrollBarThickness - LeftDistance - NumberSpacing;
             int textHeight = this.Height - ScrollBarThickness - TopDistance;
             if (MaxSize.Width > textWidth)
@@ -283,6 +290,7 @@ namespace ComplexTextBox
 
         private void InsertLetters(string letters)
         {
+            if (letters == "") return;
             letters = ReplaceLinebreak(letters);
             string[] addLines = letters.Split(new string[] { Linebreak }, StringSplitOptions.None);
             if(addLines.Length > 1)
@@ -291,6 +299,7 @@ namespace ComplexTextBox
                 int newCurPos = addLines[addLines.Length - 1].Length;
                 addLines[addLines.Length - 1] = addLines[addLines.Length - 1] + lines[CursorPos.Item1].Substring(CursorPos.Item2, lines[CursorPos.Item1].Length - CursorPos.Item2);
                 lines[CursorPos.Item1] = addLines[0];
+                //lines.InsertRange(CursorPos.Item1, addLines.Skip(1)); // Doesn't work properly
                 for(int i = 1; i < addLines.Length; i++)
                 {
                     lines.Insert(CursorPos.Item1 + i, addLines[i]);
@@ -328,9 +337,83 @@ namespace ComplexTextBox
             }
         }
 
+        private bool SelectionAvailable()
+        {
+            return CursorPos != SelectionStart;
+        }
+
+        private string GetSelection()
+        {
+            if (!SelectionAvailable()) return "";
+            (int, int) oldCursorPos = (CursorPos.Item1, CursorPos.Item2);
+            (int, int) oldSelectionStart = (SelectionStart.Item1, SelectionStart.Item2);
+            if (SelectionStartIsAfterCursorPos()) SwitchCursorAndSelectionStart();
+            string finalstr = "";
+            fixedSelection = true;
+            while(CursorPos != SelectionStart)
+            {
+                if (CursorPos.Item2 > 0)
+                {
+                    finalstr = lines[CursorPos.Item1][CursorPos.Item2 - 1] + finalstr;
+                    CursorPos = (CursorPos.Item1, CursorPos.Item2 - 1);
+                }
+                else
+                {
+                    if (CursorPos.Item1 > 0)
+                    {
+                        int newCurPos = lines[CursorPos.Item1 - 1].Length;
+                        finalstr = Linebreak + finalstr;
+                        CursorPos = (CursorPos.Item1 - 1, newCurPos);
+                    }
+                }
+                ValidateCursor();
+            }
+            fixedSelection = false;
+            CursorPos = (oldCursorPos.Item1, oldCursorPos.Item2);
+            SelectionStart = (oldSelectionStart.Item1, oldSelectionStart.Item2);
+            return finalstr;
+        }
+
+        private void ClearSelection()
+        {
+            SelectionStart = (CursorPos.Item1, CursorPos.Item2);
+        }
+
+        private static string Reverse(string str)
+        {
+            string finalstr = "";
+            for(int i = str.Length - 1; i >= 0; i--)
+            {
+                finalstr += str[i];
+            }
+            return finalstr;
+        }
+
+        private bool SelectionStartIsAfterCursorPos()
+        {
+            if (SelectionStart.Item1 > CursorPos.Item1) return true;
+            if (SelectionStart.Item1 < CursorPos.Item1) return false;
+            return SelectionStart.Item2 > CursorPos.Item2;
+        }
+
+        private void SwitchCursorAndSelectionStart()
+        {
+            (int, int) x = (CursorPos.Item1, CursorPos.Item2);
+            CursorPos = (SelectionStart.Item1, SelectionStart.Item2);
+            SelectionStart = (x.Item1, x.Item2);
+        }
+
         private string ReplaceLinebreak(string str)
         {
-            List<int> positions = new List<int>();
+            string pattern = "";
+            for(int i = 0; i < ConvertToLinebreak.Length; i++)
+            {
+                pattern += "|" + Regex.Escape(ConvertToLinebreak[i]);
+            }
+            pattern = "(" + pattern.Substring(1) + ")";
+            return Regex.Replace(str.Replace(Linebreak, ConvertToLinebreak[0]), pattern, Linebreak);
+
+            /*List<int> positions = new List<int>();
             for(int i = 0; i < ConvertToLinebreak.Length; i++)
             {
                 while (str.Contains(ConvertToLinebreak[i]))
@@ -343,7 +426,7 @@ namespace ComplexTextBox
             {
                 str = str.Insert(positions[i] + (i * (Linebreak.Length - 1)), Linebreak);
             }
-            return str;
+            return str;*/
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -364,25 +447,118 @@ namespace ComplexTextBox
                 {
                     LineRenderer.RenderText(e.Graphics, LineNumberingFont, new PointF(5 - horizontalScroll.Value, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), Convert.ToString(i + 1), new SolidBrush(ForeColor), new SolidBrush(BackColor));
                 }
-                NumberSpacing = MeasureText(Convert.ToString(lines.Count), LineNumberingFont).Width + 10;
+                NumberSpacing = MeasureTextHelper.MeasureText(Convert.ToString(lines.Count), LineNumberingFont).Width + 10;
                 e.Graphics.DrawLine(new Pen(new SolidBrush(NumberTextSeparatorColor), 1.5f), new Point(NumberSpacing - horizontalScroll.Value, 0), new Point(NumberSpacing - horizontalScroll.Value, this.Height));
             }
 
             // Render text
-            ITextRenderer renderer = new PlainTextRenderer();
-            for(int i = start; i < end; i++)
+            /*for(int i = start; i < end; i++)
             {
-                renderer.RenderText(e.Graphics, DefaultFont, new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), lines[i], new SolidBrush(ForeColor), new SolidBrush(BackColor));
+                PlainText.RenderText(e.Graphics, DefaultFont, new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), lines[i], new SolidBrush(ForeColor), new SolidBrush(BackColor));
+            }*/
+
+            // Render text
+            RenderFragment[][] fragments = BuildRenderFragments();
+            for(int i = 0; i < fragments.Length; i++)
+            {
+                for(int j = 0; j < fragments[i].Length; j++)
+                {
+                    fragments[i][j].Render(e.Graphics, DefaultFont, new SolidBrush(ForeColor), new SolidBrush(BackColor));
+                }
             }
 
             // Render Cursor
-            int strWidth = MeasureText(lines[CursorPos.Item1].Substring(0, CursorPos.Item2), DefaultFont).Width;
+            int strWidth = MeasureTextHelper.MeasureText(lines[CursorPos.Item1].Substring(0, CursorPos.Item2), DefaultFont).Width;
             CursorRenderer.RenderCursor(e.Graphics, MaxSize.Height, new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing + strWidth + 2, (LineHeight + LineSpacing) * CursorPos.Item1 + TopDistance - verticalScroll.Value));
 
             // Overwrite Corner between scrollbars for better look
             e.Graphics.FillRectangle(new SolidBrush(BackColor), this.Width - ScrollBarThickness, this.Height - ScrollBarThickness, ScrollBarThickness, ScrollBarThickness);
 
             this.Focus();
+        }
+
+        public RenderFragment[][] BuildRenderFragments()
+        {
+            // calculate start and end line for rendering to save performance
+            int start = Math.Max(verticalScroll.Value / (LineHeight + LineSpacing) - 1, 0);
+            int count = this.Height / (LineHeight + LineSpacing);
+            int end = Math.Min(start + count + 1, lines.Count);
+
+            int NumberSpacing = 0;
+            if (LineNumbering) NumberSpacing = MeasureTextHelper.MeasureText(Convert.ToString(lines.Count), LineNumberingFont).Width + 10;
+
+            RenderFragment[][] fragments = new RenderFragment[lines.Count][];
+
+            if (SelectionAvailable())
+            {
+                (int, int) pos1;
+                (int, int) pos2;
+                if (SelectionStartIsAfterCursorPos())
+                {
+                    pos1 = (CursorPos.Item1, CursorPos.Item2);
+                    pos2 = (SelectionStart.Item1, SelectionStart.Item2);
+                }
+                else
+                {
+                    pos1 = (SelectionStart.Item1, SelectionStart.Item2);
+                    pos2 = (CursorPos.Item1, CursorPos.Item2);
+                }
+                bool firstPart = true;
+                for(int i = Math.Min(start, pos1.Item1); i < Math.Max(end, pos2.Item1); i++)
+                {
+                    if(pos1.Item1 != pos2.Item1)
+                    {
+                        if (firstPart)
+                        {
+                            if (pos1.Item1 != i) fragments[i] = new RenderFragment[] { new RenderFragment(new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), PlainText, lines[i]) };
+                            else
+                            {
+                                fragments[i] = new RenderFragment[]
+                                {
+                                    new RenderFragment(new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), PlainText, lines[i].Substring(0, pos1.Item2)),
+                                    new RenderFragment(new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing + MeasureTextHelper.MeasureText(lines[i].Substring(0, pos1.Item2), DefaultFont).Width - 1, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), SelectionRenderer, lines[i].Substring(pos1.Item2, lines[i].Length - pos1.Item2))
+                                };
+                                firstPart = false;
+                            }
+                        }
+                        else
+                        {
+                            if (pos2.Item1 != i) fragments[i] = new RenderFragment[] { new RenderFragment(new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), SelectionRenderer, lines[i]) };
+                            else
+                            {
+                                fragments[i] = new RenderFragment[]
+                                {
+                                    new RenderFragment(new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), SelectionRenderer, lines[i].Substring(0, pos2.Item2)),
+                                    new RenderFragment(new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing + MeasureTextHelper.MeasureText(lines[i].Substring(0, pos2.Item2), DefaultFont).Width - 1, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), PlainText, lines[i].Substring(pos2.Item2, lines[i].Length - pos2.Item2))
+                                };
+                                firstPart = true;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (pos1.Item1 != i) fragments[i] = new RenderFragment[] { new RenderFragment(new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), PlainText, lines[i]) };
+                        else
+                        {
+                            fragments[i] = new RenderFragment[]
+                            {
+                                new RenderFragment(new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), PlainText, lines[i].Substring(0, pos1.Item2)),
+                                new RenderFragment(new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing + MeasureTextHelper.MeasureText(lines[i].Substring(0, pos1.Item2), DefaultFont).Width, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), SelectionRenderer, lines[i].Substring(pos1.Item2, pos2.Item2 - pos1.Item2)),
+                                new RenderFragment(new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing + MeasureTextHelper.MeasureText(lines[i].Substring(0, pos2.Item2), DefaultFont).Width, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), PlainText, lines[i].Substring(pos2.Item2, lines[i].Length - pos2.Item2))
+                            };
+                        }
+                    }
+                }
+                return fragments;
+            }
+            else
+            {
+                for(int i = start; i < end; i++)
+                {
+                    fragments[i] = new RenderFragment[] { new RenderFragment(new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), PlainText, lines[i]) };
+                }
+                return fragments;
+            }
         }
 
         private string GetLongestLine()
@@ -418,70 +594,109 @@ namespace ComplexTextBox
 
         protected override bool ProcessDialogKey(Keys keyData)
         {
-            if (keyData == Keys.Right)
+            string str = KeysHelper.KeyCodeToUnicode(keyData);
+            if(str == "")
             {
-                MoveCursor(1);
-                Refresh();
-                return true;
-            }
-            if (keyData == Keys.Left)
-            {
-                MoveCursor(-1);
-                Refresh();
-                return true;
-            }
-            if(keyData == Keys.Up)
-            {
-                CursorPos = (CursorPos.Item1 - 1, CursorPos.Item2);
-                ValidateCursor();
-                Refresh();
-                return true;
-            }
-            if(keyData == Keys.Down)
-            {
-                CursorPos = (CursorPos.Item1 + 1, CursorPos.Item2);
-                ValidateCursor();
-                Refresh();
-                return true;
+                if (keyData == Keys.Right || (keyData.HasFlag(Keys.Right) && keyData.HasFlag(Keys.Shift)))
+                {
+                    MoveCursor(1);
+                    Refresh();
+                    return true;
+                }
+                if (keyData == Keys.Left || (keyData.HasFlag(Keys.Left) && keyData.HasFlag(Keys.Shift)))
+                {
+                    MoveCursor(-1);
+                    Refresh();
+                    return true;
+                }
+                if (keyData == Keys.Up || (keyData.HasFlag(Keys.Up) && keyData.HasFlag(Keys.Shift)))
+                {
+                    CursorPos = (CursorPos.Item1 - 1, CursorPos.Item2);
+                    ValidateCursor();
+                    Refresh();
+                    return true;
+                }
+                if (keyData == Keys.Down || (keyData.HasFlag(Keys.Down) && keyData.HasFlag(Keys.Shift)))
+                {
+                    CursorPos = (CursorPos.Item1 + 1, CursorPos.Item2);
+                    ValidateCursor();
+                    Refresh();
+                    return true;
+                }
+                if (keyData == Keys.End || (keyData.HasFlag(Keys.End) && keyData.HasFlag(Keys.Shift)))
+                {
+                    CursorPos = (CursorPos.Item1, lines[CursorPos.Item1].Length);
+                    ValidateCursor();
+                    Refresh();
+                    return true;
+                }
+                if (keyData == Keys.Home || (keyData.HasFlag(Keys.Home) && keyData.HasFlag(Keys.Shift)))
+                {
+                    CursorPos = (CursorPos.Item1, 0);
+                    ValidateCursor();
+                    Refresh();
+                    return true;
+                }
             }
             if (keyData == Keys.Back)
             {
-                RemoveLetters(1);
+                if (!SelectionAvailable())
+                {
+                    RemoveLetters(1);
+                }
+                else
+                {
+                    if (SelectionStartIsAfterCursorPos()) SwitchCursorAndSelectionStart();
+                    RemoveLetters(GetSelection().Replace(Linebreak,"x").Length);
+                }
                 if (TextChanged != null) TextChanged(this, EventArgs.Empty);
                 return true;
             }
             if(keyData == Keys.Delete)
             {
-                (int, int) oldPos = CursorPos;
-                MoveCursor(1);
-                if (oldPos != CursorPos) RemoveLetters(1);
+                if (!SelectionAvailable())
+                {
+                    (int, int) oldPos = CursorPos;
+                    MoveCursor(1);
+                    if (oldPos != CursorPos) RemoveLetters(1);
+                }
+                else
+                {
+                    if (SelectionStartIsAfterCursorPos()) SwitchCursorAndSelectionStart();
+                    RemoveLetters(GetSelection().Replace(Linebreak, "x").Length);
+                }
                 if (TextChanged != null) TextChanged(this, EventArgs.Empty);
                 return true;
             }
-            if(keyData == Keys.End)
+            if(keyData.HasFlag(Keys.Control) && keyData.HasFlag(Keys.C))
             {
-                CursorPos = (CursorPos.Item1, lines[CursorPos.Item1].Length);
-                ValidateCursor();
-                Refresh();
-                return true;
-            }
-            if(keyData == Keys.Home)
-            {
-                CursorPos = (CursorPos.Item1, 0);
-                ValidateCursor();
-                Refresh();
-                return true;
+                if (SelectionAvailable())
+                {
+                    Clipboard.SetText(GetSelection());
+                    return true;
+                }
             }
             if(keyData.HasFlag(Keys.Control) && keyData.HasFlag(Keys.V))
             {
                 if (Clipboard.ContainsText())
                 {
-                    InsertLetters(Clipboard.GetText());
+                    if (!SelectionAvailable())
+                    {
+                        InsertLetters(Clipboard.GetText());
+                    }
+                    else
+                    {
+                        if (SelectionStartIsAfterCursorPos()) SwitchCursorAndSelectionStart();
+                        RemoveLetters(GetSelection().Replace(Linebreak, "x").Length);
+                        InsertLetters(Clipboard.GetText());
+                    }
+                    ClearSelection();
                     if (TextChanged != null) TextChanged(this, EventArgs.Empty);
                     return true;
                 }
             }
-            InsertLetters("" + KeyCodeToUnicode(keyData));
+            InsertLetters(str);
+            if (str != "") ClearSelection();
             if (TextChanged != null) TextChanged(this, EventArgs.Empty);
             return true;
         }
@@ -490,51 +705,5 @@ namespace ComplexTextBox
         {
             this.Focus();
         }
-
-        public static Size MeasureText(string Text, Font Font)
-        {
-            // https://stackoverflow.com/a/6275131
-            TextFormatFlags flags
-              = TextFormatFlags.Left
-              | TextFormatFlags.Top
-              | TextFormatFlags.NoPadding
-              | TextFormatFlags.NoPrefix;
-            Size szProposed = new Size(int.MaxValue, int.MaxValue);
-            Size sz1 = System.Windows.Forms.TextRenderer.MeasureText(".", Font, szProposed, flags);
-            Size sz2 = System.Windows.Forms.TextRenderer.MeasureText(Text + ".", Font, szProposed, flags);
-            return new Size(sz2.Width - sz1.Width, sz2.Height);
-        }
-
-        public string KeyCodeToUnicode(Keys key)
-        {
-            byte[] keyboardState = new byte[255];
-            bool keyboardStateStatus = GetKeyboardState(keyboardState);
-
-            if (!keyboardStateStatus)
-            {
-                return "";
-            }
-
-            uint virtualKeyCode = (uint)key;
-            uint scanCode = MapVirtualKey(virtualKeyCode, 0);
-            IntPtr inputLocaleIdentifier = GetKeyboardLayout(0);
-
-            StringBuilder result = new StringBuilder();
-            ToUnicodeEx(virtualKeyCode, scanCode, keyboardState, result, (int)5, (uint)0, inputLocaleIdentifier);
-
-            return result.ToString();
-        }
-
-        [DllImport("user32.dll")]
-        static extern bool GetKeyboardState(byte[] lpKeyState);
-
-        [DllImport("user32.dll")]
-        static extern uint MapVirtualKey(uint uCode, uint uMapType);
-
-        [DllImport("user32.dll")]
-        static extern IntPtr GetKeyboardLayout(uint idThread);
-
-        [DllImport("user32.dll")]
-        static extern int ToUnicodeEx(uint wVirtKey, uint wScanCode, byte[] lpKeyState, [Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pwszBuff, int cchBuff, uint wFlags, IntPtr dwhkl);
     }
 }

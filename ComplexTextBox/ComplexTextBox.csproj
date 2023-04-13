@@ -51,9 +51,13 @@
     </Compile>
     <Compile Include="CursorRenderer\DefaultCursorRenderer.cs" />
     <Compile Include="CursorRenderer\ICursorRenderer.cs" />
+    <Compile Include="Helpers\KeysHelper.cs" />
+    <Compile Include="Helpers\MeasureTextHelper.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="RenderFragment.cs" />
     <Compile Include="TextRenderer\ITextRenderer.cs" />
     <Compile Include="TextRenderer\PlainTextRenderer.cs" />
+    <Compile Include="TextRenderer\SelectionRenderer.cs" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="ComplexTextBox.resx">

@@ -351,11 +351,16 @@ namespace ComplexTextBox
             // Fill using backcolor
             e.Graphics.Clear(BackColor);
 
+            // calculate start and end line for rendering to save performance
+            int start = Math.Max(verticalScroll.Value / (LineHeight + LineSpacing) - 1, 0);
+            int count = this.Height / (LineHeight + LineSpacing);
+            int end = Math.Min(start + count + 1, lines.Count);
+
             // Draw line numbers
             int NumberSpacing = 0;
             if (LineNumbering)
             {
-                for (int i = 0; i < lines.Count; i++)
+                for (int i = start; i < end; i++)
                 {
                     LineRenderer.RenderText(e.Graphics, LineNumberingFont, new PointF(5 - horizontalScroll.Value, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), Convert.ToString(i + 1), new SolidBrush(ForeColor), new SolidBrush(BackColor));
                 }
@@ -365,7 +370,7 @@ namespace ComplexTextBox
 
             // Render text
             ITextRenderer renderer = new PlainTextRenderer();
-            for(int i = 0; i < lines.Count; i++)
+            for(int i = start; i < end; i++)
             {
                 renderer.RenderText(e.Graphics, DefaultFont, new PointF(LeftDistance - horizontalScroll.Value + NumberSpacing, TopDistance + i * (LineHeight + LineSpacing) - verticalScroll.Value), lines[i], new SolidBrush(ForeColor), new SolidBrush(BackColor));
             }
@@ -452,6 +457,29 @@ namespace ComplexTextBox
                 if (oldPos != CursorPos) RemoveLetters(1);
                 if (TextChanged != null) TextChanged(this, EventArgs.Empty);
                 return true;
+            }
+            if(keyData == Keys.End)
+            {
+                CursorPos = (CursorPos.Item1, lines[CursorPos.Item1].Length);
+                ValidateCursor();
+                Refresh();
+                return true;
+            }
+            if(keyData == Keys.Home)
+            {
+                CursorPos = (CursorPos.Item1, 0);
+                ValidateCursor();
+                Refresh();
+                return true;
+            }
+            if(keyData.HasFlag(Keys.Control) && keyData.HasFlag(Keys.V))
+            {
+                if (Clipboard.ContainsText())
+                {
+                    InsertLetters(Clipboard.GetText());
+                    if (TextChanged != null) TextChanged(this, EventArgs.Empty);
+                    return true;
+                }
             }
             InsertLetters("" + KeyCodeToUnicode(keyData));
             if (TextChanged != null) TextChanged(this, EventArgs.Empty);
